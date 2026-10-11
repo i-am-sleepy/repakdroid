@@ -1,0 +1,58 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # If you uploaded the project as a .zip (GitHub's web uploader does NOT extract zips),
+      # unpack it here so the rest of the workflow sees a normal project.
+      - name: Extract uploaded zip (only if needed)
+        run: |
+          if [ ! -d app ] || [ ! -d rust ]; then
+            z=$(ls *.zip 2>/dev/null | head -n1 || true)
+            if [ -z "$z" ]; then echo "No project files and no zip found"; exit 1; fi
+            rm -rf _x && mkdir _x && unzip -q "$z" -d _x
+            top=$(find _x -mindepth 1 -maxdepth 1 -type d | head -n1)
+            [ -d "$top/app" ] || top=_x
+            cp -a "$top"/. .
+          fi
+          ls -la
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build Rust library (arm64)
+        working-directory: rust
+        run: cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build APK
+        run: gradle --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repak-apk
+          path: app/build/outputs/apk/debug/*.apk
